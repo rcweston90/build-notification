@@ -1,40 +1,44 @@
 #!/bin/bash
-# install.sh — Adds the clauden notification wrapper to ~/.zshrc
+# install.sh — Sets up macOS notifications for Claude Code
+#   1. Adds clauden wrapper to ~/.zshrc (notifies on task complete/fail)
+#   2. Adds Notification hook to ~/.claude/settings.json (notifies when Claude needs input)
 
 set -euo pipefail
 
 ZSHRC="$HOME/.zshrc"
+SETTINGS="$HOME/.claude/settings.json"
 END_MARKER="# ----- End Mac Setup additions -----"
 
-# 1. Check ~/.zshrc exists
-if [ ! -f "$ZSHRC" ]; then
-    echo "Error: $ZSHRC not found."
-    exit 1
-fi
+# ── Part 1: clauden wrapper in ~/.zshrc ──────────────────────────────
 
-# 2. Check for existing clauden function
-if grep -q '^clauden()' "$ZSHRC"; then
-    echo "clauden function already exists in $ZSHRC — nothing to do."
-    exit 0
-fi
+install_clauden() {
+    if [ ! -f "$ZSHRC" ]; then
+        echo "Error: $ZSHRC not found."
+        return 1
+    fi
 
-# 3. Back up ~/.zshrc
-backup="$ZSHRC.backup.$(date +%Y%m%d%H%M%S)"
-cp "$ZSHRC" "$backup"
-echo "Backed up $ZSHRC to $backup"
+    if grep -q '^clauden()' "$ZSHRC"; then
+        echo "clauden function already exists in $ZSHRC — skipping."
+        return 0
+    fi
 
-# 4. Check for end marker
-if ! grep -qF "$END_MARKER" "$ZSHRC"; then
-    echo "Error: Could not find '$END_MARKER' in $ZSHRC."
-    echo "Please add the clauden function manually."
-    exit 1
-fi
+    # Back up ~/.zshrc
+    local backup="$ZSHRC.backup.$(date +%Y%m%d%H%M%S)"
+    cp "$ZSHRC" "$backup"
+    echo "Backed up $ZSHRC to $backup"
 
-# 5. Insert clauden function before the end marker
-tmpfile=$(mktemp)
-while IFS= read -r line; do
-    if [ "$line" = "$END_MARKER" ]; then
-        cat <<'FUNC'
+    if ! grep -qF "$END_MARKER" "$ZSHRC"; then
+        echo "Error: Could not find '$END_MARKER' in $ZSHRC."
+        echo "Please add the clauden function manually."
+        return 1
+    fi
+
+    # Insert clauden function before the end marker
+    local tmpfile
+    tmpfile=$(mktemp)
+    while IFS= read -r line; do
+        if [ "$line" = "$END_MARKER" ]; then
+            cat <<'FUNC'
 # Claude Code notification wrapper
 clauden() {
     claude "$@"
@@ -48,13 +52,75 @@ clauden() {
 }
 
 FUNC
+        fi
+        printf '%s\n' "$line"
+    done < "$ZSHRC" > "$tmpfile"
+
+    mv "$tmpfile" "$ZSHRC"
+    echo "Added clauden function to $ZSHRC"
+}
+
+# ── Part 2: Notification hook in ~/.claude/settings.json ─────────────
+
+install_notification_hook() {
+    if [ ! -f "$SETTINGS" ]; then
+        echo "Creating $SETTINGS"
+        mkdir -p "$(dirname "$SETTINGS")"
+        echo '{}' > "$SETTINGS"
     fi
-    printf '%s\n' "$line"
-done < "$ZSHRC" > "$tmpfile"
 
-mv "$tmpfile" "$ZSHRC"
+    # Check if Notification hook already exists
+    if python3 -c "
+import json, sys
+with open('$SETTINGS') as f:
+    data = json.load(f)
+sys.exit(0 if data.get('hooks', {}).get('Notification') else 1)
+" 2>/dev/null; then
+        echo "Notification hook already exists in $SETTINGS — skipping."
+        return 0
+    fi
 
-echo "Added clauden function to $ZSHRC"
+    # Back up settings
+    local backup="$SETTINGS.backup.$(date +%Y%m%d%H%M%S)"
+    cp "$SETTINGS" "$backup"
+    echo "Backed up $SETTINGS to $backup"
+
+    # Merge the Notification hook into existing settings
+    python3 -c "
+import json
+
+with open('$SETTINGS') as f:
+    data = json.load(f)
+
+data.setdefault('hooks', {})
+data['hooks']['Notification'] = [
+    {
+        'matcher': '',
+        'hooks': [
+            {
+                'type': 'command',
+                'command': 'osascript -e \'display notification \"Claude Code needs your attention\" with title \"Needs Input\" sound name \"Glass\"\'',
+            }
+        ],
+    }
+]
+
+with open('$SETTINGS', 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+"
+    echo "Added Notification hook to $SETTINGS"
+}
+
+# ── Run ──────────────────────────────────────────────────────────────
+
+install_clauden
+install_notification_hook
+
+echo ""
+echo "Done! Two notification sources configured:"
+echo "  1. clauden wrapper  — notifies when a task completes or fails"
+echo "  2. Notification hook — notifies when Claude needs your input"
 echo ""
 echo "Next steps:"
 echo "  Run: source ~/.zshrc"
