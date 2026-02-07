@@ -43,10 +43,14 @@ install_clauden() {
 clauden() {
     claude "$@"
     local exit_code=$?
+    local project
+    project=$(basename "$PWD")
     if [ $exit_code -eq 0 ]; then
-        osascript -e 'display notification "Claude Code task finished" with title "Task Complete" sound name "Glass"'
+        osascript -e "display alert \"✅ $project — Complete\" message \"Task finished in $project\"" &
+        osascript -e "beep" &
     else
-        osascript -e 'display notification "Claude Code task failed" with title "Task Failed" sound name "Basso"'
+        osascript -e "display alert \"❌ $project — Failed\" message \"Task failed in $project\"" &
+        osascript -e "beep" &
     fi
     return $exit_code
 }
@@ -99,7 +103,7 @@ data['hooks']['Notification'] = [
         'hooks': [
             {
                 'type': 'command',
-                'command': 'osascript -e \'display notification \"Claude Code needs your attention\" with title \"Needs Input\" sound name \"Glass\"\'',
+                'command': 'PROJECT=\$(basename \"\$PWD\") && osascript -e \"display alert \\\"⏸️ \$PROJECT — Needs Input\\\" message \\\"Waiting for input in \$PROJECT\\\"\" & osascript -e \"beep\" &',
             }
         ],
     }
@@ -118,9 +122,11 @@ install_clauden
 install_notification_hook
 
 echo ""
-echo "Done! Two notification sources configured:"
+echo "Done! Notifications configured:"
 echo "  1. clauden wrapper  — notifies when a task completes or fails"
 echo "  2. Notification hook — notifies when Claude needs your input"
+echo "  Titles include your project folder name (e.g. '✅ my-app — Complete')"
+echo "  Alerts persist on screen until dismissed."
 echo ""
 echo "Next steps:"
 echo "  Run: source ~/.zshrc"
